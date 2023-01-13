@@ -33,7 +33,7 @@ def args_parser():
     parse.add_argument('-server', type=str, default='172.16.0.1', help='Server IP address')
     parse.add_argument('-port', type=int, default=5050, help='Socket port')
     parse.add_argument('-bond', type=int, default=2, help='Threshold for FedAvg on Sever side')
-    parse.add_argument('-name', type=int, default=1, help='Client Name')
+    parse.add_argument('-cn', type=int, default=10, help='Client Number')
 
     args = parse.parse_args()
     return args
@@ -170,11 +170,12 @@ def train_step(model,
                optimizer,
                accuracy_fn,
                device,
-               ITERATION):
+               ITERATION,
+               CLIENT):
 
     train_loss, train_acc = 0, 0
     model.train()
-    random.seed(ITERATION)
+    random.seed(ITERATION+CLIENT)
     seed = random.randint(0, len(data_loader) - 1)
     # print(ITERATION, seed)
     X, y = list(iter(data_loader))[seed]
