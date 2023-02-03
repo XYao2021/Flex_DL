@@ -4,6 +4,7 @@ import sklearn
 from functions import *
 from torchvision import datasets
 from torchvision import transforms
+from torch.utils.data import DataLoader
 import sys
 import os
 import operator
@@ -62,11 +63,11 @@ q_avg = 0.25
 # optimization = minimize(objective_function, v_t, method='SLSQP')
 # print(optimization)
 
-# train_data = datasets.FashionMNIST(root="data",
-#                                    train=True,
-#                                    transform=transforms.ToTensor(),
-#                                    target_transform=None,
-#                                    download=True)
+train_data = datasets.FashionMNIST(root="data",
+                                   train=True,
+                                   transform=transforms.ToTensor(),
+                                   target_transform=None,
+                                   download=True)
 # test_data = datasets.MNIST(root="data",
 #                            train=False,
 #                            transform=transforms.ToTensor(),
@@ -96,7 +97,10 @@ q_avg = 0.25
 # unstack = torch.unbind(stack, -1)
 # print(unstack[0].int(), unstack[1][unstack[0].int()[0]])
 # print(b[(a == 4).nonzero().item()])
-a = torch.tensor([])
-b = torch.tensor([])
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = MNISTModel(input_shape=784, output_shape=10, hidden_units=50).to(device)
+loss = nn.CrossEntropyLoss().to(device)
+optim = torch.optim.SGD(params=model.parameters(), lr=0.1)
 
-print(len(a))
+DataLoader(dataset=train_data, batch_size=32, shuffle=True)
+e_t = torch.zeros_like(torch.cat([para.reshape((-1,)) for para in model.parameters()])).to(device)

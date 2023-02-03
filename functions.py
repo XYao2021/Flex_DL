@@ -23,17 +23,20 @@ SIZE = 1024
 def args_parser():
     parse = argparse.ArgumentParser()
 
-    parse.add_argument('-agg', type=int, default=10, help='Global Aggregation times')
+    parse.add_argument('-agg', type=int, default=1000, help='Global Aggregation times')
     parse.add_argument('-lr', type=float, default=0.1, help='Learning Rate of the Model')
     parse.add_argument('-bs', type=int, default=32, help='Batch Size for model')
     parse.add_argument('-ts', type=list, default=[0, 2, 4, 6, 8, 9], help='Target set for training and local testing')
     parse.add_argument('-iter', type=int, default=20, help='Local Training Times: Iterations')
-    parse.add_argument('-comp', type=float, default=0.5, help='The rate of compression')
 
     parse.add_argument('-server', type=str, default='172.16.0.1', help='Server IP address')
     parse.add_argument('-port', type=int, default=5050, help='Socket port')
     parse.add_argument('-bond', type=int, default=2, help='Threshold for FedAvg on Sever side')
-    parse.add_argument('-cn', type=int, default=10, help='Client Number')
+    parse.add_argument('-cn', type=int, default=100, help='Client Number')
+    parse.add_argument('-V', type=float, default=0.02, help='V value, constant weight to ensure the average of p(t) close to optimal ')
+    parse.add_argument('-W', type=float, default=1.0, help='W value, initial queue length')
+    parse.add_argument('-seed', type=int, default=1, help='random seed for pseudo random model initial weights')
+    parse.add_argument('-ratio', type=float, default=0.1, help='the ratio of non-zero elements that the baseline want to transfer')
 
     args = parse.parse_args()
     return args
@@ -42,6 +45,11 @@ def accuracy_fn(y_true, y_pred):
     correct = torch.eq(y_true, y_pred).sum().item()
     acc = (correct/len(y_pred)) * 100
     return acc
+
+def initial_weights(m):
+    if type(m) == nn.Linear:
+        torch.manual_seed(42)
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
 class MNISTModel(nn.Module):  # Improve the model V0 with nonlinear activation function nn.Relu()
     def __init__(self, input_shape,
@@ -74,17 +82,17 @@ class CIFAR_10(nn.Module):
         x = self.linear_layer(x)
         return x
 
-def data_sampling(classes, N):
+def data_sampling(classes, N, SEED):
     num_classes = len(classes)
     sample = []
     if N <= num_classes:
         n, m = num_classes % N, int(num_classes / N)
         if n == 0:
-            random.seed(42)
+            random.seed(SEED)
             sample = random.sample(classes, k=num_classes)
             sample = np.split(np.array(sample), N)
         else:
-            random.seed(42)
+            random.seed(SEED)
             org_sample = random.sample(classes, k=num_classes)
             for i in range(N):
                 if N - i <= n:
@@ -94,12 +102,12 @@ def data_sampling(classes, N):
     else:
         n, m = N % num_classes, int(N / num_classes)
         if n == 0:
-            random.seed(42)
+            random.seed(SEED)
             for i in range(m):
                 sample += random.sample(classes, k=num_classes)
             sample = np.split(np.array(sample), N)
         else:
-            random.seed(42)
+            random.seed(SEED)
             for i in range(m):
                 sample += random.sample(classes, k=num_classes)
             for j in range(n):
@@ -118,38 +126,9 @@ def split_data(sample, train_data):
         data.append(local_data)
     return data
 
-# def top_K_compression(parameters):  # for model.parameters()
-#     Trans = []
-#     for param in parameters:
-#         trans = torch.zeros_like(param)
-#         k = int(max(param.size()) * 0.1)
-#         weight = param.grad
-#         values, indices = torch.topk(torch.abs(weight), k)
-#         if param.ndimension() != 1:
-#             for i in range(len(weight)):
-#                 trans[i][indices[i]] = weight[i][indices[i]]
-#         else:
-#             trans[indices] = weight[indices]
-#         Trans.append(trans)
-#     return Trans
-
-def top_K_compression_ratio(parameters, ratio):  # with ratio for every layer
-    Trans = []
-    for param in parameters:
-        trans = torch.zeros_like(param)
-        k = int(max(param.size()) * ratio)
-        # weight = param.grad
-        values, indices = torch.topk(torch.abs(param), k)
-        if param.ndimension() != 1:
-            for i in range(len(param)):
-                trans[i][indices[i]] = param[i][indices[i]]
-        else:
-            trans[indices] = param[indices]
-        Trans.append(trans)
-    return Trans
-
 def top_k(b_t, V, PHI, beta_t, df):  # Also works for u_t
-    gamma_t = 1 / (len(b_t) * (0.5 * np.log2(1 + np.random.chisquare(df=df))))
+    C = 0.5 * np.log2(1 + np.random.chisquare(df=df))
+    gamma_t = 1 / (len(b_t) * C)
     i = 0
     k_star = 0
     while i < len(b_t):
@@ -163,55 +142,6 @@ def top_k(b_t, V, PHI, beta_t, df):  # Also works for u_t
                 k_star = 0
         i += 1
     return k_star, gamma_t
-
-def train_step(model,
-               data_loader,
-               loss_fn,
-               optimizer,
-               accuracy_fn,
-               device,
-               ITERATION,
-               CLIENT):
-
-    train_loss, train_acc = 0, 0
-    model.train()
-    random.seed(ITERATION+CLIENT)
-    seed = random.randint(0, len(data_loader) - 1)
-    # print(ITERATION, seed)
-    X, y = list(iter(data_loader))[seed]
-    X, y = X.to(device), y.to(device)
-
-    y_pred = model(X)
-    loss = loss_fn(y_pred, y)
-    train_loss += loss
-    train_acc += accuracy_fn(y, y_pred.argmax(dim=1))
-    # print(train_loss, '\n')
-
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    return train_loss.item(), train_acc
-
-def test_step(model,
-              data_loader,
-              loss_fn,
-              accuracy_fn,
-              device):
-    test_loss, test_acc = 0, 0
-
-    model.eval()
-    with torch.inference_mode():
-        for X, y in data_loader:
-            X, y = X.to(device), y.to(device)
-            test_pred = model(X)
-
-            test_loss += loss_fn(test_pred, y)
-            test_acc += accuracy_fn(y, test_pred.argmax(dim=1))
-        # Adjust metrics and print out
-        test_loss /= len(data_loader)
-        test_acc /= len(data_loader)
-    return test_loss.item(), test_acc
 
 def bt_computation(et, gradient, constant):
     b_t_org = et - constant*gradient
@@ -267,3 +197,52 @@ def recv_msg(sock, expect_msg_type=None):
     if (expect_msg_type is not None) and (msg[0] != expect_msg_type):
         raise Exception("Expected " + expect_msg_type + " but received " + msg[0])
     return msg
+
+def train_step(model,
+               data_loader,
+               loss_fn,
+               optimizer,
+               accuracy_fn,
+               device,
+               ITERATION,
+               CLIENT):
+
+    train_loss, train_acc = 0, 0
+    model.train()
+    random.seed(ITERATION+CLIENT)
+    seed = random.randint(0, len(data_loader) - 1)
+    # print(ITERATION, seed)
+    X, y = list(iter(data_loader))[seed]
+    X, y = X.to(device), y.to(device)
+
+    y_pred = model(X)
+    loss = loss_fn(y_pred, y)
+    train_loss += loss
+    train_acc += accuracy_fn(y, y_pred.argmax(dim=1))
+    # print(train_loss, '\n')
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    return train_loss.item(), train_acc
+
+def test_step(model,
+              data_loader,
+              loss_fn,
+              accuracy_fn,
+              device):
+    test_loss, test_acc = 0, 0
+
+    model.eval()
+    with torch.inference_mode():
+        for X, y in data_loader:
+            X, y = X.to(device), y.to(device)
+            test_pred = model(X)
+
+            test_loss += loss_fn(test_pred, y)
+            test_acc += accuracy_fn(y, test_pred.argmax(dim=1))
+        # Adjust metrics and print out
+        test_loss /= len(data_loader)
+        test_acc /= len(data_loader)
+    return test_loss.item(), test_acc

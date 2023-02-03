@@ -23,6 +23,7 @@ LEARNING_RATE = args.lr
 AGGREGATION = args.agg
 CLIENTS = args.cn
 SEED = args.seed
+RATIO = args.ratio
 
 "Initialize parameters"
 lamda_avg = 0.25
@@ -31,6 +32,7 @@ psi_avg = 0.01
 V = 0.02
 W = 1.0
 beta_t = 0.05
+D = 2
 
 LAMDA = [W for _ in range(CLIENTS)]
 PHI = [W for _ in range(CLIENTS)]
@@ -110,44 +112,32 @@ for iter in range(AGGREGATION):
                                            ITERATION=iter,
                                            CLIENT=i)
         # print('Round ', iter, '|', 'Client ', i, '|', 'train loss: ', train_loss)
-        # Train_Loss[i].append(train_loss)
-        # Train_Acc[i].append(train_acc)
+        Train_Loss[i].append(train_loss)
+        Train_Acc[i].append(train_acc)
         global_loss.append(train_loss)
 
         alpha = np.random.uniform(low=0, high=1, size=1).item()
-        if LAMDA[i] == 0:
-            q_t = 1
-        else:
-            q_t = min(1, math.sqrt(V / (alpha * LAMDA[i])))
-        LAMDA[i] = max(0, LAMDA[i] + alpha * q_t - lamda_avg)
+        q_t = min(lamda_avg/alpha, 1)
+        # LAMDA[i] = max(0, LAMDA[i] + alpha * q_t - lamda_avg)
 
         I_t = np.random.binomial(1, q_t, 1).item()
         gradient = torch.cat([weights.grad.reshape((-1,)) for weights in Models[i].parameters()])
 
         if LEARNING_RATE * (I_t / q_t) != 0:
             b_t_org, b_t, indices = bt_computation(e_ts[i], gradient, LEARNING_RATE * (I_t / q_t))
-            k_star, gamma_t = top_k(b_t, V, PHI[i], beta_t, 2)
-            v_t = b_t[: k_star]
-            v_t_indices = indices[: k_star]
+            k = int(len(b_t) * RATIO)
+            # k_star, gamma_t = top_K_compression_ratio(b_t, V, PHI[i], beta_t, 2, RATIO)
+            v_t = b_t[: k]
+            v_t_indices = indices[: k]
             b_t_org[v_t_indices] = b_t_org[v_t_indices] - v_t
             e_ts[i] = torch.clone(b_t_org)
-
-        else:
-            sorted, indices = torch.sort(torch.abs(e_ts[i]), descending=True)
-            b_t = e_ts[i][indices]
-            k_star, gamma_t = top_k(b_t, V, PHI[i], beta_t, 2)
-            v_t = b_t[: k_star]
-            v_t_indices = indices[: k_star]
-            e_ts[i][v_t_indices] = e_ts[i][v_t_indices] - v_t
-
-        if k_star == 0:
-            phi_t = 0
-            V_t_send = []
-        else:
-            phi_t = beta_t + k_star * gamma_t
+            k_star = torch.linalg.norm(v_t, 0).int().item()
+            if k_star <= k:
+                v_t = v_t[: k_star]
+                v_t_indices = v_t_indices[: k_star]
             V_t_send = torch.stack([v_t_indices, v_t], -1)
-
-        PHI[i] = max(0, PHI[i] + phi_t - phi_avg)
+        else:
+            V_t_send = []
         VT.append(V_t_send)
 
     g_l = sum(global_loss) / len(global_loss)
@@ -162,22 +152,20 @@ for iter in range(AGGREGATION):
 
     sorted, indices = torch.sort(torch.abs(a_t), descending=True)
     new_a_t = a_t[indices]
-    k_star, gamma = top_k(new_a_t, V, PSI, beta_t, 5)
+    # k_star, gamma = top_k(new_a_t, V, PSI, beta_t, 5)
+    ks = int(len(new_a_t) * RATIO)
+    ks_star = torch.linalg.norm(new_a_t[: k], 0).int().item()
 
-    if k_star == 0:
-        r_t = torch.clone(a_t)
-        u_t_send = []
-        psi_t = 0
+    if ks_star <= ks:
+        u_t = new_a_t[: ks_star]
+        u_t_indices = indices[: ks_star]
     else:
-        u_t = new_a_t[: k_star]
-        u_t_indices = indices[: k_star]
-        a_t[u_t_indices] = a_t[u_t_indices] - u_t
-        r_t = torch.clone(a_t)
-        u_t_send = torch.stack([u_t_indices, u_t], -1)
-        old_weights[u_t_indices] = old_weights[u_t_indices] + u_t
-        psi_t = beta_t + torch.linalg.norm(u_t, 0) * gamma
-
-    PSI = max(0, PSI + psi_t - psi_avg)
+        u_t = new_a_t[: ks]
+        u_t_indices = indices[: ks]
+    a_t[u_t_indices] = a_t[u_t_indices] - u_t
+    r_t = torch.clone(a_t)
+    u_t_send = torch.stack([u_t_indices, u_t], -1)
+    old_weights[u_t_indices] = old_weights[u_t_indices] + u_t
 
     new_weights = torch.split(old_weights, length)
     test_weights = dict()
@@ -209,7 +197,6 @@ for iter in range(AGGREGATION):
 
 print('Test Loss: ', Test_Loss)
 print('Test Acc: ', Test_Acc)
-print('Global Loss: ', Global_Loss)
 
 # plt.plot(range(len(Test_Acc)), Test_Acc)
 # plt.xlabel('Iterations')
@@ -220,9 +207,8 @@ print('Global Loss: ', Global_Loss)
 # plt.show()
 
 txt_list = [['Test_Loss: ', Test_Loss], '\n',
-            ['Test_Acc: ', Test_Acc], '\n',
-            ['Global Loss: ', Global_Loss]]
+            ['Test_Acc: ', Test_Acc]]
 
-f = open('simulation_result_{}.txt'.format(time.time()), 'w')
+f = open('results.txt', 'w')
 for item in txt_list:
     f.write("%s\n" % item)
