@@ -27,16 +27,10 @@ RATIO = args.ratio
 
 "Initialize parameters"
 lamda_avg = 0.25
-phi_avg = 0.01
-psi_avg = 0.01
-V = 0.02
-W = 1.0
-beta_t = 0.05
-D = 2
 
-LAMDA = [W for _ in range(CLIENTS)]
-PHI = [W for _ in range(CLIENTS)]
-PSI = W
+# LAMDA = [W for _ in range(CLIENTS)]
+# PHI = [W for _ in range(CLIENTS)]
+# PSI = W
 
 train_data = datasets.FashionMNIST(root='data',
                                    train=True,
@@ -119,14 +113,12 @@ for iter in range(AGGREGATION):
         alpha = np.random.uniform(low=0, high=1, size=1).item()
         q_t = min(lamda_avg/alpha, 1)
         # LAMDA[i] = max(0, LAMDA[i] + alpha * q_t - lamda_avg)
-
         I_t = np.random.binomial(1, q_t, 1).item()
         gradient = torch.cat([weights.grad.reshape((-1,)) for weights in Models[i].parameters()])
 
         if LEARNING_RATE * (I_t / q_t) != 0:
             b_t_org, b_t, indices = bt_computation(e_ts[i], gradient, LEARNING_RATE * (I_t / q_t))
             k = int(len(b_t) * RATIO)
-            # k_star, gamma_t = top_K_compression_ratio(b_t, V, PHI[i], beta_t, 2, RATIO)
             v_t = b_t[: k]
             v_t_indices = indices[: k]
             b_t_org[v_t_indices] = b_t_org[v_t_indices] - v_t
@@ -152,7 +144,6 @@ for iter in range(AGGREGATION):
 
     sorted, indices = torch.sort(torch.abs(a_t), descending=True)
     new_a_t = a_t[indices]
-    # k_star, gamma = top_k(new_a_t, V, PSI, beta_t, 5)
     ks = int(len(new_a_t) * RATIO)
     ks_star = torch.linalg.norm(new_a_t[: k], 0).int().item()
 

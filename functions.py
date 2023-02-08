@@ -48,8 +48,11 @@ def accuracy_fn(y_true, y_pred):
 
 def initial_weights(m):
     if type(m) == nn.Linear:
-        torch.manual_seed(42)
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        # torch.manual_seed(42)
+        # nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
+        # nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+        # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
 
 class MNISTModel(nn.Module):  # Improve the model V0 with nonlinear activation function nn.Relu()
     def __init__(self, input_shape,

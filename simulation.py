@@ -32,6 +32,11 @@ V = 0.02
 W = 1.0
 beta_t = 0.05
 
+# Compare the results with different initial value for V(fix W) and W(fix V)
+# V = [0.002, 0.005, 0.01, 0.02, 0.05, 0.1]
+# W = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0]
+
+
 LAMDA = [W for _ in range(CLIENTS)]
 PHI = [W for _ in range(CLIENTS)]
 PSI = W
